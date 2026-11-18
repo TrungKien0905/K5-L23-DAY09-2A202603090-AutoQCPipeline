@@ -35,10 +35,80 @@ Gợi ý
 - `iou_xywh` có sẵn. Dòng nhãn hỏng không được làm script chết (dùng `ds.valid_boxes` và `parse_yolo_line` trong try).
 - Kết quả phụ thuộc mạnh vào ngưỡng: calibrate chúng ở Bước 3 thay vì đoán.
 """
-from ..common import WARN, Issue, iou_xywh, parse_yolo_line  # noqa: F401
-from ..model_cache import get_preds  # noqa: F401
+from ..common import WARN, Issue, iou_xywh, parse_yolo_line
+from ..model_cache import get_preds
+
+
+def _labeled_boxes(lines, n_classes):
+    boxes = []
+    for line, text in lines:
+        try:
+            class_id, *box = parse_yolo_line(text)
+        except (ValueError, OverflowError):
+            continue
+        if 0 <= class_id < n_classes:
+            boxes.append((line, class_id, box))
+    return boxes
 
 
 def run(ds, cfg, preds=None):
-    # TODO
-    raise NotImplementedError("check second_opinion chưa làm")
+    if preds is None:
+        preds = get_preds(ds, cfg, "checker")
+
+    limits = cfg["second_opinion"]
+    iou_missing = limits["iou_missing"]
+    issues = []
+
+    for path in ds.image_files():
+        stem = path.stem
+        if stem not in preds:
+            continue
+        lines = ds.read_label_lines(stem)
+        size = ds.image_size(stem)
+        if lines is None or size is None:
+            continue
+
+        image_width, image_height = size
+        labels = _labeled_boxes(lines, len(ds.classes))
+        predictions = preds[stem]
+
+        for predicted_class, confidence, cx, cy, width, height in predictions:
+            area_px = (width * image_width) * (height * image_height)
+            if confidence < limits["conf"] or area_px < limits["min_area_px"]:
+                continue
+
+            predicted_box = (cx, cy, width, height)
+            best_iou = None
+            best_same_iou = None
+            for _, class_id, box in labels:
+                overlap = iou_xywh(predicted_box, box)
+                if overlap < iou_missing:
+                    continue
+                if best_iou is None or overlap > best_iou:
+                    best_iou = overlap
+                if class_id == predicted_class and (best_same_iou is None or overlap > best_same_iou):
+                    best_same_iou = overlap
+
+            extra = {"conf": confidence}
+            if best_iou is None:
+                code, message = "POSSIBLE_MISSING", "model thấy vật chưa có box nhãn"
+            elif best_same_iou is not None:
+                if best_same_iou >= limits["iou_loose"]:
+                    continue
+                code, message = "POSSIBLE_LOOSE_BOX", "box nhãn cùng lớp có thể lỏng hoặc lệch"
+                extra["iou"] = best_same_iou
+            elif best_iou >= limits["iou_match"]:
+                code, message = "POSSIBLE_WRONG_CLASS", "model và nhãn có thể gán khác lớp cho cùng vật"
+                extra["iou"] = best_iou
+            else:
+                continue
+            issues.append(Issue("second_opinion", WARN, code, stem, message, extra=extra))
+
+        fp_boxes = [prediction[2:] for prediction in predictions if prediction[1] >= limits["fp_conf"]]
+        for line, _, box in labels:
+            best_iou = max((iou_xywh(box, predicted_box) for predicted_box in fp_boxes), default=0.0)
+            if not fp_boxes or best_iou < iou_missing:
+                issues.append(Issue("second_opinion", WARN, "POSSIBLE_FALSE_POS", stem,
+                                    "box nhãn không khớp vật nào model thấy", line, {"iou": best_iou}))
+
+    return issues
