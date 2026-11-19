@@ -1,18 +1,25 @@
-# Báo cáo Day 09 — Hồ Trung Kiên, 2A202603090
-
-> Xoá mọi  và dòng gợi ý. Mỗi ý trả lời bằng **số lấy từ `submission/reports/`**, kèm mẫu số. Cả báo cáo ~1–2 trang.
+# Báo cáo Day 09 — Hồ Trung Kiên 2A202603090
 
 ## 1. Kết luận trước
-pipeline kết luận **Release / Hold / Rework**? Bao nhiêu ảnh vào, bao nhiêu ảnh ra dataset? Lý do chính (1–3 câu).
+
+**Hold.** Pipeline quét 224 ảnh raw, loại 19 ảnh (8,48%) và xuất bản nháp `clean_v1` gồm 205 ảnh. Sau khi duyệt 80/125 ảnh trong hàng đợi, còn 0 lỗi bắt buộc và 38/205 ảnh có cảnh báo chưa duyệt (18,54%), vượt ngưỡng 10%. [Tóm tắt pipeline](reports/08_summary.json)
 
 ## 2. Lỗi và phân việc
-Lấy từ `02_error_list_v1` (gom theo mã lỗi). Cột "ai sửa": **máy** (autofix) hay **người** (hàng đợi); chỉ ghi những mã có mặt trong lô của bạn.
 
-| Mã lỗi | Số ảnh/dòng | Ai sửa (máy/người) | Vì sao |
-|---|---:|---|---|
-|| | | |
+Báo cáo trước khi sửa có 208 mục gồm 55 lỗi bắt buộc và 153 cảnh báo. Trong đó có 19 lỗi ở cửa vào trên 224 ảnh raw và 189 mục QC trên 205 ảnh được nhận. Trước khi sửa, 199/205 ảnh có file nhãn, tổng cộng 675 dòng nhãn có nội dung. [Báo cáo trước khi sửa](reports/02_error_list_v1.csv)
 
-vì sao `05_review_queue.csv` xếp ảnh đầu hàng như vậy? Với ngân sách 80 ảnh, người xem được bao nhiêu lỗi ngữ nghĩa?
+| Mã lỗi và số lượng | Đơn vị | Ai xử lý và vì sao |
+|---|---|---|
+| `DUP_IMAGE_EXACT` 8, `DUP_IMAGE_NEAR` 2, `LEAK_TEST` 4, `BAD_SIZE` 3, `CORRUPT_IMAGE` 2 | Ảnh / 224 raw | Máy loại ảnh ở cửa vào theo tiêu chí trùng, rò rỉ, kích thước hoặc ảnh hỏng. |
+| `BAD_CLASS_ID` 6, `BAD_FORMAT` 3, `BOX_ZERO` 4, `DUP_BOX` 7 | Dòng nhãn | Máy xóa 20 dòng sai ID, sai định dạng, box rỗng hoặc box lặp. |
+| `BOX_OUT_OF_IMAGE` 8 | Dòng nhãn | Máy cắt 8 box về trong biên ảnh. |
+| `BAD_CLASS_NAME` 2 | Mục cấp dataset | Máy sửa `Person` và `Bus` bằng một lần ghi lại `data.yaml`. |
+| `MISSING_LABEL_FILE` 6 | Ảnh / 205 | Người gán nhãn cho 6 ảnh. Máy ghi `needs_label` để chuyển duyệt. |
+| `POSSIBLE_MISSING` 53, `POSSIBLE_FALSE_POS` 29, `POSSIBLE_LOOSE_BOX` 28, `POSSIBLE_WRONG_CLASS` 18 | Cảnh báo | Người kiểm tra ảnh vì dự đoán của model là gợi ý. |
+| `EMPTY_LABEL` 12, `BOX_TINY` 6, `BOX_HUGE` 3 | Cảnh báo | Người phân biệt ảnh nền, box hợp lệ và lỗi nhãn. |
+| `CLASS_RARE` 4 | Mục cấp dataset | Người đối chiếu thống kê lớp. Các mục này hết sau khi máy bỏ các dòng có ID sai. |
+
+Hàng đợi cộng điểm theo loại cảnh báo, độ tin cậy và các lần máy sửa. `img_0020` đứng đầu (11,524 điểm) vì có cả cờ nhầm lớp, thiếu box và một dòng đã bị xóa. Sáu ảnh thiếu file nhãn có điểm 10 và đều được duyệt. Đối chiếu QC sau tự sửa với log cho thấy 80/125 ảnh đã duyệt bao phủ **94/123 cảnh báo ngữ nghĩa**, trên 74/103 ảnh có cảnh báo loại này. Số này đo độ bao phủ của lượt duyệt. [Dấu vết tự sửa](reports/03_fixes.csv) · [QC sau tự sửa](reports/04_error_list_v2.csv) · [Hàng đợi](reports/05_review_queue.csv) · [Log duyệt](reports/06_review_log.csv)
 
 ## 3. Calibration (2 ngưỡng)
 | Tham số | Khởi đầu | Đã chọn | Precision / Recall (trước → sau) | Lý do (đánh đổi) |
@@ -25,20 +32,31 @@ Trên calib, pHash 16 đạt precision 1.00 và bắt 5/6 ảnh gần trùng. Tr
 Ở ngưỡng 4, hai cặp gần trùng `img_0076`–`img_0042` và `img_0143`–`img_0037` đều cho thấy cùng một cảnh khi mở ảnh. Với hai ngưỡng đã chọn, lô raw có 38/205 ảnh còn cảnh báo sau duyệt (18,54%), giảm từ 60/205 (29,27%) ở cấu hình khởi đầu. Kết luận vẫn là `Hold` vì tỷ lệ này vượt ngưỡng 10%.
 
 ## 4. Cửa chặn và điều pipeline KHÔNG bắt được
-(a) chứng minh gate chặn đúng: chạy `python -m pipeline.run --budget 0 --reports work/rep_nb --export-dir work/exp_nb` (không có người duyệt nên ảnh thiếu file nhãn còn nguyên), chỉ ra kết luận **Rework**, mã thoát 20 và việc **không xuất** dataset. (Đừng sửa tay `work/run/ds`: pipeline dựng lại thư mục này từ raw mỗi lần chạy.) (b) ≥ 2 điểm mù có bằng chứng (box lỏng nhẹ, nhầm lớp mà model lớn cũng nhầm, ảnh trùng biến đổi mạnh…).
 
-Khi xem nhãn vẽ trên ảnh của lô raw, tôi ghi nhận ba lỗi:
+Chạy `python -X utf8 -m pipeline.run --budget 0 --work work/report-gate-0a92/run --reports work/report-gate-0a92/reports --export-dir work/report-gate-0a92/export`. Với 0 ảnh được duyệt, 6/205 ảnh còn thiếu file nhãn. Gate trả **Rework**, mã thoát **20**, `exported` là `null` và không sinh `clean_v1/manifest.json`.
 
-- `img_0001` thiếu một box `person` cho người xuất hiện trong ảnh.
-- `img_0002` có một box `person` gán nhầm cho động cơ thuyền.
-- `img_0035` có một box `person` gán nhầm cho cây.
+- **Sai ngữ nghĩa.** Khi xem nhãn raw, tôi thấy `img_0002` có box `person` gán nhầm cho động cơ thuyền. Ảnh này được nhận và không có cờ trong báo cáo trước sửa, hàng đợi hay báo cáo cuối. Trong hai quan sát còn lại, `img_0001` thiếu box `person` và được báo `POSSIBLE_MISSING`, còn `img_0035` có box `person` gán nhầm cho cây và vẫn còn cờ `POSSIBLE_FALSE_POS` dòng 2 sau duyệt. [Báo cáo sau duyệt](reports/07_error_list_v3.csv)
+- **Ảnh trùng bị biến đổi mạnh.** Ở pHash 4, bộ kiểm bỏ sót 2/6 ca gần trùng trên calib là `calib_037` (biến đổi mức 3) và `calib_038` (mức 4). [Kết quả calibration](calibration/calibration_report.md) · [Nhãn đối chiếu calib](../data/calib/MANIFEST.csv)
 
 ## 5. Train: raw vs clean (tùy chọn, chấm riêng)
-Chưa train: ghi "chưa chạy" và lý do, rồi bỏ qua phần còn lại của mục này. Nếu đã train: dán bảng từ `submission/results/comparison.md` (model, epoch, seed, số ảnh train mỗi biến thể).
+Hai biến thể dùng `yolo26n.pt`, 20 epoch, seed 0 và 1, batch 16, kích thước ảnh 640. Cả hai dùng chung tập validation 40 ảnh và tập test 100 ảnh theo quy trình của repo. Bảng ghi trung bình và độ lệch chuẩn giữa hai seed. [Bảng tổng hợp Colab](results/comparison.md)
 
-chênh mAP50 (clean − raw) so với **độ lệch chuẩn giữa các seed**; kết luận **trung thực** (nằm trong nhiễu thì nói là chưa kết luận được); ≥ 2 giả thuyết giải thích (ảnh trùng/rò rỉ test trong `raw`, nhãn máy còn lại trong `clean`, test chỉ 100 ảnh…) và cách kiểm.
+| Biến thể | Ảnh train | mAP50 | mAP50–95 | Precision | Recall |
+|---|---:|---:|---:|---:|---:|
+| raw | 224 | 0.726 ± 0.000 | 0.512 ± 0.004 | 0.764 ± 0.061 | 0.649 ± 0.028 |
+| clean | 205 | 0.700 ± 0.030 | 0.486 ± 0.013 | 0.715 ± 0.073 | 0.615 ± 0.017 |
+
+SHA-1 của cấu hình khớp cả bốn lần train. SHA-1 của manifest khớp cả hai lần train `clean`.
+
+Chênh mAP50 trung bình (clean − raw) là **−0.0254**. Chênh lệch nhỏ hơn độ lệch chuẩn của clean (0.0305), trong khi độ lệch chuẩn của raw là 0.0002. Raw có mAP50 cao hơn ở cả hai seed, nhưng mức chênh thay đổi từ 0.0468 (seed 0) xuống 0.0040 (seed 1). Hai seed chưa đủ để kết luận raw tốt hơn một cách ổn định.
+
+- Ảnh raw trùng với kho test/val có thể làm điểm raw cao hơn. Có thể kiểm tra các cặp `LEAK_TEST` trong `01_intake.csv`, rồi train lại một bản raw chỉ bỏ các ảnh trùng đã xác nhận, với cùng seed và cùng tập đánh giá.
+- Clean có ít hơn 19 ảnh train và có thể mất ví dụ hữu ích của lớp `truck`. AP50 trung bình của lớp này giảm từ khoảng 0.648 xuống 0.559. Có thể đếm box `truck` theo lớp trong 19 ảnh bị loại, đối chiếu với nhãn còn lại và so sánh lại trên hai tập train có cùng số ảnh.
 
 ## 6. Quyết định và ghi chú AI
-(a) quyết định cuối; nếu Hold/Rework cần làm gì để thành Release? (b) Dùng AI viết code? Ghi 3 dòng: prompt chính, cách bạn kiểm code AI, 1 lần AI sai. Không dùng: ghi "không dùng".
 
-*(Thưởng +2, tùy chọn)* CVAT: lọc `width < 20`, ảnh/số box khớp, đối chiếu `BOX_TINY` (xem docs/CVAT_FILTER.md), 1 câu về `can_review`.
+Giữ **Hold**. Với 205 ảnh, điều kiện Release là 0 lỗi bắt buộc và tối đa 20 ảnh còn cảnh báo chưa duyệt. Cần xử lý hoặc xác nhận ít nhất 18/38 ảnh đang còn cảnh báo, rồi chạy lại QC và gate theo quy trình duyệt. Giữ ngưỡng gate 10% và ngân sách 80 ảnh của bài lab.
+
+- **Prompt chính.** Nhờ AI viết bốn module theo docstring và test của repo, sau đó yêu cầu một script chỉ đọc nhãn YOLO, in tên file, số dòng và lý do khi box tràn ảnh.
+- **Cách kiểm.** Chạy 79 test và chạy pipeline với ngân sách 80 và 0. Kiểm script tràn box trên ca mẫu và bản sao calib, gồm bốn mép ảnh và dòng thiếu cột.
+- **Một lỗi của AI.** Bản đầu của script tràn box dừng khi gặp dòng thiếu cột. Bản sửa ghi tên file, số dòng và lý do ra `stderr`, rồi tiếp tục quét. Bản sao calib báo đủ 2 dòng sai định dạng đã chèn.
